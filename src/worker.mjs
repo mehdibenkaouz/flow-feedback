@@ -105,4 +105,5 @@ export async function handleRequest(request, env, now = Date.now()) {
   }
   return secure(result, origin);
 }
-export default { fetch: handleRequest };
+// Cloudflare passes ExecutionContext as the third fetch argument, not a timestamp.
+export default { fetch(request, env) { return handleRequest(request, env); } };
