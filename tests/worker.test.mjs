@@ -16,11 +16,37 @@ function setup() {
 }
 
 test('ready only with database migrations and configured secrets', async () => {
-  const f = setup(); const ready = await f.run('/health'); assert.equal(ready.status, 200); assert.deepEqual(await ready.json(), { service: 'flow-feedback', version: 1, ready: true, auth: 'password' });
+  const f = setup(); const ready = await f.run('/health'); assert.equal(ready.status, 200); assert.deepEqual(await ready.json(), { service: 'flow-feedback', version: 1, ready: true, auth: 'password', checks: { databaseBinding: true, adminPasswordValid: true, signingKeyValid: true, secretsDistinct: true, noPlaceholders: true, databaseTables: true } });
   for (const patch of [{ ADMIN_PASSWORD: '' }, { ADMIN_PASSWORD: 'short' }, { FEEDBACK_SIGNING_KEY: '' }, { DB: undefined }, { ADMIN_PASSWORD: 'INSERISCI-UNA-PASSWORD-DI-20-CARATTERI' }]) {
     const config = { ...f.env, ...patch }; assert.equal((await f.run('/health', 'GET', undefined, {}, now, config)).status, 503);
     assert.equal((await f.run('/api/feedback/challenge', 'GET', undefined, {}, now, config)).status, 503);
   }
+});
+test('health diagnoses configuration failures independently without exposing secrets', async () => {
+  const f = setup();
+  for (const [patch, failed] of [
+    [{ ADMIN_PASSWORD: 'short' }, 'adminPasswordValid'],
+    [{ ADMIN_PASSWORD: 'x'.repeat(201) }, 'adminPasswordValid'],
+    [{ FEEDBACK_SIGNING_KEY: undefined }, 'signingKeyValid'],
+    [{ FEEDBACK_SIGNING_KEY: 'short' }, 'signingKeyValid'],
+    [{ FEEDBACK_SIGNING_KEY: f.env.ADMIN_PASSWORD }, 'secretsDistinct'],
+    [{ FEEDBACK_SIGNING_KEY: 'CHANGE_ME-placeholder-not-for-production' }, 'noPlaceholders'],
+    [{ DB: undefined }, 'databaseBinding'],
+    [{ DB: { prepare() { throw Error('private database error'); } } }, 'databaseTables'],
+  ]) {
+    const result = await f.run('/health', 'GET', undefined, {}, now, { ...f.env, ...patch });
+    assert.equal(result.status, 503);
+    const text = await result.text(), data = JSON.parse(text);
+    assert.equal(data.ready, false); assert.equal(data.checks[failed], false);
+    assert(Object.values(data.checks).every(value => typeof value === 'boolean'));
+    assert(!text.includes(f.env.ADMIN_PASSWORD)); assert(!text.includes(f.env.FEEDBACK_SIGNING_KEY));
+    assert(!text.includes('private database error'));
+    if (!Object.hasOwn(patch, 'DB')) assert.equal(data.checks.databaseTables, true);
+  }
+  f.db.exec('DROP TABLE feedback_admin_sessions');
+  const result = await f.run('/health'), data = await result.json();
+  assert.equal(result.status, 503); assert.equal(data.checks.databaseTables, false);
+  assert.equal(data.checks.adminPasswordValid, true); assert.equal(data.checks.signingKeyValid, true);
 });
 test('anonymous readers and fabricated or legacy credentials cannot read messages', async () => {
   const f = setup(); assert.equal((await f.run('/api/admin/feedback')).status, 401);
