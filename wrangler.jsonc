@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "flow-feedback",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-10-18",
+  "workers_dev": true,
+  "observability": { "enabled": false },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "flow-feedback",
+      "database_id": "ca0f90a8-5eb3-4daf-827d-c173c555de8d",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
